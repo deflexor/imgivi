@@ -39,6 +39,7 @@ mkAttrMap _st =
     [ (attrName "fileSelected", U.on V.white V.cyan)
     , (attrName "fileMarked",   U.on V.white V.yellow)
     , (attrName "helpBar",      U.on V.white V.blue)
+    , (attrName "renameAttr",   U.on V.brightRed V.black)
     , (attrName "imgBg",        U.on V.black V.black)
     ]
 

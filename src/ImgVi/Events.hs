@@ -16,13 +16,24 @@ import Brick
 import qualified Graphics.Vty as V
 import qualified System.Directory as Dir
 import qualified Data.List as L (partition, zipWith3)
+import qualified Data.Text as T
 
 import ImgVi.ImageCache (isImageFile, updateCacheForFile)
-import ImgVi.Types (AppState(..), FileItem(..), Name, SelectionMode(..), emptyCache)
+import ImgVi.Types (AppState(..), FileItem(..), Name, RenameState(..), SelectionMode(..), emptyCache)
 
--- | Main event handler.
+-- | Main event handler. Dispatches to rename handler when in rename mode.
 handleEvent :: BrickEvent Name () -> EventM Name AppState ()
-handleEvent (VtyEvent vev) = case vev of
+handleEvent (VtyEvent vev) = do
+  st <- gets id
+  case asRename st of
+    Just rs -> handleRenameEvent vev rs
+    Nothing -> handleNormalEvent vev
+handleEvent _ = pass
+
+-- ── Normal mode (no rename active) ─────────────────────
+
+handleNormalEvent :: V.Event -> EventM Name AppState ()
+handleNormalEvent vev = case vev of
   V.EvKey (V.KChar 'q') [] -> halt
   V.EvKey V.KEsc []         -> halt
 
@@ -32,19 +43,129 @@ handleEvent (VtyEvent vev) = case vev of
   V.EvKey (V.KChar 's') []  -> toggleSelectCurrent
   V.EvKey (V.KChar ' ') []  -> handleRangeSelect
   V.EvKey (V.KChar 'd') []  -> deleteSelected
-  V.EvKey (V.KChar 'r') []  -> renameCurrent
+  V.EvKey (V.KChar 'r') []  -> startRenameCurrent
   V.EvKey V.KEnter []        -> enterDir
 
   V.EvResize w h             -> handleResize w h
 
   _                         -> pass
-handleEvent _ = pass
 
--- | Update stored terminal dimensions on resize.
+-- ── Rename mode ────────────────────────────────────────
+
+handleRenameEvent :: V.Event -> RenameState -> EventM Name AppState ()
+handleRenameEvent vev rs = case vev of
+  -- Cancel
+  V.EvKey V.KEsc [] -> cancelRename
+
+  -- Commit
+  V.EvKey V.KEnter [] -> commitRename rs
+
+  -- Edit
+  V.EvKey V.KBS []     -> renameBackspace rs
+  V.EvKey (V.KChar c) [] | c >= ' ' -> renameInsertChar rs c
+  V.EvKey V.KDel []    -> renameDelete rs
+
+  -- Navigation
+  V.EvKey V.KLeft  [] -> renameMoveCursor rs (-1)
+  V.EvKey V.KRight [] -> renameMoveCursor rs 1
+  V.EvKey V.KHome []  -> modify $ \s -> s { asRename = Just rs { rsCursor = 0 } }
+  V.EvKey V.KEnd  []  -> modify $ \s -> s { asRename = Just rs { rsCursor = T.length (rsBuffer rs) } }
+
+  _ -> pass
+
+-- | Insert a character at the cursor position in the rename buffer.
+renameInsertChar :: RenameState -> Char -> EventM Name AppState ()
+renameInsertChar rs c = do
+  let txt  = rsBuffer rs
+      pos  = rsCursor rs
+      lhs   = T.take pos txt
+      rhs   = T.drop pos txt
+      newBuf = lhs <> T.singleton c <> rhs
+  modify $ \s -> s { asRename = Just rs { rsBuffer = newBuf, rsCursor = pos + 1 } }
+
+-- | Delete the character before the cursor (Backspace).
+renameBackspace :: RenameState -> EventM Name AppState ()
+renameBackspace rs = do
+  let pos = rsCursor rs
+  when (pos > 0) $ do
+    let txt  = rsBuffer rs
+        lhs   = T.take (pos - 1) txt
+        rhs   = T.drop pos txt
+    modify $ \s -> s { asRename = Just rs { rsBuffer = lhs <> rhs, rsCursor = pos - 1 } }
+
+-- | Delete the character at the cursor (Delete / Del).
+renameDelete :: RenameState -> EventM Name AppState ()
+renameDelete rs = do
+  let txt  = rsBuffer rs
+      pos  = rsCursor rs
+  when (pos < T.length txt) $ do
+    let lhs = T.take pos txt
+        rhs = T.drop (pos + 1) txt
+    modify $ \s -> s { asRename = Just rs { rsBuffer = lhs <> rhs } }
+
+-- | Move the rename cursor left or right (clamped to buffer bounds).
+renameMoveCursor :: RenameState -> Int -> EventM Name AppState ()
+renameMoveCursor rs delta = do
+  let newPos = max 0 (min (T.length (rsBuffer rs)) (rsCursor rs + delta))
+  modify $ \s -> s { asRename = Just rs { rsCursor = newPos } }
+
+-- | Cancel rename mode, restoring original name.
+cancelRename :: EventM Name AppState ()
+cancelRename =
+  modify $ \s -> s { asRename = Nothing, asStatus = "Rename cancelled" }
+
+-- | Validate and commit the rename.
+commitRename :: RenameState -> EventM Name AppState ()
+commitRename rs = do
+  let newName = rsBuffer rs
+  case validateName newName of
+    Left err ->
+      modify $ \s -> s { asRename = Just rs, asStatus = err }
+    Right _ -> do
+      st <- gets id
+      let oldName = rsOriginal rs
+          dir     = asCurrentDir st
+          oldPath = dir ++ "/" ++ oldName
+          newPath = dir ++ "/" ++ toString newName
+      liftIO $ Dir.renameFile oldPath newPath
+      modify $ \s -> s { asRename = Nothing, asStatus = "Renamed to " <> newName }
+      -- Refresh directory listing
+      loadDirIntoState dir
+
+-- | Validate a proposed file name.
+validateName :: Text -> Either Text ()
+validateName name
+  | T.null name                = Left "Error: name cannot be empty"
+  | T.any (== '/') name        = Left "Error: name cannot contain '/'"
+  | T.any (== '\0') name       = Left "Error: name cannot contain null bytes"
+  | T.strip name /= name       = Left "Error: name cannot start or end with whitespace"
+  | otherwise                  = Right ()
+
+-- ── Terminal resize ────────────────────────────────────
+
 handleResize :: Int -> Int -> EventM Name AppState ()
 handleResize w h = modify $ \s -> s { asTermWidth = w, asTermHeight = h }
 
--- | Move the cursor up/down and trigger image cache update.
+-- ── File listing helpers (unchanged) ───────────────────
+
+startRenameCurrent :: EventM Name AppState ()
+startRenameCurrent = do
+  st <- gets id
+  case getCurrentItem st of
+    Nothing -> modify $ \s -> s { asStatus = "No file selected" }
+    Just item -> do
+      let originalName = fiPath item
+          bufferText   = toText originalName
+          cursorPos    = T.length bufferText
+      modify $ \s -> s
+        { asRename = Just RenameState
+            { rsOriginal = originalName
+            , rsBuffer   = bufferText
+            , rsCursor   = cursorPos
+            }
+        , asStatus = "Editing name (Enter=confirm, Esc=cancel)"
+        }
+
 moveCursor :: Int -> EventM Name AppState ()
 moveCursor delta = do
   st       <- gets id
@@ -60,7 +181,6 @@ moveCursor delta = do
         Just item -> loadImageForCursor dir item
         Nothing   -> pass
 
--- | Load (or refresh cache for) the image at the cursor.
 loadImageForCursor :: FilePath -> FileItem -> EventM Name AppState ()
 loadImageForCursor dir item
   | not (isImageFile (fiPath item)) = pass
@@ -72,7 +192,6 @@ loadImageForCursor dir item
         (newCache, Just _)  -> modify $ \s -> s { asImgCache = newCache }
         (newCache, Nothing) -> modify $ \s -> s { asImgCache = newCache, asStatus = "Failed to decode" }
 
--- | Toggle selection of the current file.
 toggleSelectCurrent :: EventM Name AppState ()
 toggleSelectCurrent = do
   st    <- gets id
@@ -89,7 +208,6 @@ toggleSelectCurrent = do
         modify $ \s -> s { asFiles = newItems, asStatus = status }
       Nothing -> pass
 
--- | Handle Space key for emacs-style range selection.
 handleRangeSelect :: EventM Name AppState ()
 handleRangeSelect = do
   st <- gets id
@@ -115,7 +233,6 @@ handleRangeSelect = do
             , asStatus  = "Selected range"
             }
 
--- | Delete selected file(s).
 deleteSelected :: EventM Name AppState ()
 deleteSelected = do
   st <- gets id
@@ -136,22 +253,6 @@ deleteSelected = do
         , asStatus   = "Deleted " <> show (length items) <> " file(s)"
         }
 
--- | Rename current file.
-renameCurrent :: EventM Name AppState ()
-renameCurrent = do
-  st <- gets id
-  case getCurrentItem st of
-    Nothing -> modify $ \s -> s { asStatus = "No file selected" }
-    Just item -> do
-      liftIO $ do
-        putStr "New name: "
-        newName <- getLine
-        let oldPath = asCurrentDir st ++ "/" ++ fiPath item
-            newPath = asCurrentDir st ++ "/" ++ toString newName
-        Dir.renameFile oldPath newPath
-      loadDirIntoState (asCurrentDir st)
-
--- | Enter the selected directory.
 enterDir :: EventM Name AppState ()
 enterDir = do
   st <- gets id
@@ -162,7 +263,6 @@ enterDir = do
       loadDirIntoState normDir
     _ -> pass
 
--- | Refresh directory listing into state.
 loadDirIntoState :: FilePath -> EventM Name AppState ()
 loadDirIntoState dir = do
   items <- liftIO $ listDirectory dir
@@ -175,14 +275,12 @@ loadDirIntoState dir = do
     , asStatus     = ""
     }
 
--- | Get the current file item (safe).
 getCurrentItem :: AppState -> Maybe FileItem
 getCurrentItem st =
   let items = asFiles st
       cur   = asCursor st
   in  items !!? cur
 
--- | List directory contents, returning FileItems.
 listDirectory :: FilePath -> IO [FileItem]
 listDirectory dir = do
   contents <- Dir.listDirectory dir
@@ -192,7 +290,6 @@ listDirectory dir = do
   sizes  <- mapM getFileSize fullPaths
   pure $ L.zipWith3 (\f isDir size -> FileItem f isDir size False) sortedContents isDirs sizes
 
--- | Get file size (0 for directories or errors).
 getFileSize :: FilePath -> IO Integer
 getFileSize path = do
   exists <- Dir.doesFileExist path
@@ -200,17 +297,14 @@ getFileSize path = do
     then Dir.getFileSize path
     else pure 0
 
--- | Replace element at index in list.
 replaceIdx :: Int -> a -> [a] -> [a]
 replaceIdx _ _ []     = []
 replaceIdx 0 x (_:xs) = x : xs
 replaceIdx n x (y:ys) = y : replaceIdx (n - 1) x ys
 
--- | Extract file name (last component) from a path.
 fileName :: FilePath -> Text
 fileName = toText . reverse . takeWhile (/= '/') . reverse
 
--- | Update the directory listing (called on startup).
 updateDirListing :: EventM Name AppState ()
 updateDirListing = do
   curDir <- gets asCurrentDir

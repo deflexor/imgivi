@@ -5,6 +5,7 @@ module ImgVi.Types
   ( Name (..)
   , FileItem (..)
   , SelectionMode (..)
+  , RenameState (..)
   , ImageCache
   , emptyCache
   , lookupCache
@@ -38,6 +39,14 @@ data SelectionMode
   | RangeSelect Int Int  -- ^ (start, currentEnd)
   deriving (Eq, Ord, Show)
 
+-- | Inline rename mode state.
+data RenameState = RenameState
+  { rsOriginal :: FilePath  -- ^ original file name (before editing)
+  , rsBuffer   :: Text      -- ^ current edit buffer
+  , rsCursor   :: Int       -- ^ cursor position in the buffer (0‑based)
+  }
+  deriving (Eq, Ord, Show)
+
 -- | Cache for decoded images, keyed by file path.
 -- Stores the raw decoded image; scaling happens at render time.
 newtype ImageCache = ImageCache
@@ -63,6 +72,7 @@ data AppState = AppState
   , asFiles      :: [FileItem]
   , asCursor     :: Int
   , asSelMode    :: SelectionMode
+  , asRename     :: Maybe RenameState
   , asImgCache   :: ImageCache
   , asStatus     :: Text
   , asTermWidth  :: Int
@@ -78,6 +88,7 @@ initialAppState termW termH = do
     , asFiles      = []
     , asCursor     = 0
     , asSelMode    = Normal
+    , asRename     = Nothing
     , asImgCache   = emptyCache
     , asStatus     = ""
     , asTermWidth  = termW
