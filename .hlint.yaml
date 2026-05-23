@@ -1,0 +1,18 @@
+# HLint configuration for imgivi
+- arguments:
+  - -XNoImplicitPrelude
+  - -XOverloadedStrings
+  - -XOverloadedRecordDot
+  - -XDisambiguateRecordFields
+  - -XDuplicateRecordFields
+
+- ignore: { name: Redundant id }
+- ignore: { name: Redundant return }
+- ignore: { name: Use >=> }
+- ignore: { name: Use <=< }
+- ignore: { name: Use camelCase }
+
+# Relude-specific hints
+- warn: { name: Use one }
+- warn: { name: Use pass }
+- warn: { name: Use putText }

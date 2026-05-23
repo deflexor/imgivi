@@ -1,0 +1,44 @@
+# ── Haskell / Cabal ──────────────────────────────────────
+dist-newstyle/
+*.o
+*.hi
+*.hie
+*.hp
+*.prof
+*.aux
+.cabal-sandbox/
+cabal.sandbox.config
+.cabal/
+
+# Stack
+.stack-work/
+
+# ── Build artifacts ─────────────────────────────────────
+result/
+.direnv/
+
+# ── Local config (generated) ───────────────────────────
+cabal.project.local
+
+# ── OS ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ─────────────────────────────────────────────────
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OpenCode (agent context system) ────────────────────
+.opencode/
+.tmp/
+
+# ── Project -------------------------------------------------
+tst.png
+libtinfo.so
+img2ascii/
+
+# ── Editor autosave ──────────────────────────────────────
+*#
+.#*

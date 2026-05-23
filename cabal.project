@@ -1,0 +1,4 @@
+packages: .
+
+package *
+  ghc-options: -optl-L/home/dfr/imgivi
