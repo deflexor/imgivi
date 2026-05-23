@@ -15,7 +15,7 @@ import Brick
   )
 import qualified Graphics.Vty as V
 import qualified System.Directory as Dir
-import qualified Data.List as L (partition, zipWith3)
+import qualified Data.List as L (find, partition, zipWith3)
 import qualified Data.Text as T
 
 import ImgVi.ImageCache (isImageFile, updateCacheForFile)
@@ -278,9 +278,17 @@ enterDir = do
       let dirName = fiPath item
       if dirName == ".."
         then do
+          -- Extract the directory name we are leaving so we can
+          -- place the cursor on it in the parent listing.
+          let curDirName = reverse (takeWhile (/= '/') (reverse (asCurrentDir st)))
           let parent = asCurrentDir st
           normDir <- liftIO $ Dir.makeAbsolute (parent ++ "/..")
           loadDirIntoState normDir
+          files <- gets asFiles
+          let matchIdx = case L.find (\(_, f) -> fiPath f == curDirName) (zip [0 ..] files) of
+                           Just (i, _) -> i
+                           Nothing     -> 0
+          modify $ \s -> s { asCursor = matchIdx }
         else do
           let newDir = asCurrentDir st ++ "/" ++ dirName
           normDir <- liftIO $ Dir.makeAbsolute newDir
