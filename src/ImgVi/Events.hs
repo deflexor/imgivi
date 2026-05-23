@@ -19,15 +19,17 @@ import qualified Data.List as L (find, partition, zipWith3)
 import qualified Data.Text as T
 
 import ImgVi.ImageCache (isImageFile, updateCacheForFile)
-import ImgVi.Types (AppState(..), FileItem(..), Name, RenameState(..), RenderMode(..), SelectionMode(..), emptyCache)
+import ImgVi.Types (AppState(..), FileItem(..), Name, RenameState(..), RenderMode(..), ConfirmState(..), SelectionMode(..), emptyCache)
 
--- | Main event handler. Dispatches to rename handler when in rename mode.
+-- | Main event handler. Dispatches to rename / confirm / normal handlers.
 handleEvent :: BrickEvent Name () -> EventM Name AppState ()
 handleEvent (VtyEvent vev) = do
   st <- gets id
   case asRename st of
     Just rs -> handleRenameEvent vev rs
-    Nothing -> handleNormalEvent vev
+    Nothing -> case asConfirm st of
+                 Just ConfirmDelete -> handleConfirmEvent vev
+                 Nothing            -> handleNormalEvent vev
 handleEvent _ = pass
 
 -- ── Normal mode (no rename active) ─────────────────────
@@ -254,21 +256,59 @@ deleteSelected = do
   let (selectedItems, _) = L.partition fiSelected (asFiles st)
   case selectedItems of
     []  -> modify $ \s -> s { asStatus = "No files selected" }
-    items -> do
-      liftIO $ forM_ items $ \item ->
-        let name = fiPath item
-        in  when (name /= "..") $ do
-              let fullPath = asCurrentDir st ++ "/" ++ name
-              if fiIsDir item
-              then Dir.removeDirectoryLink fullPath
-              else Dir.removeFile fullPath
-      let kept = filter (not . fiSelected) (asFiles st)
-      modify $ \s -> s
-        { asFiles    = kept
-        , asCursor   = min (asCursor st) (max 0 (length kept - 1))
-        , asImgCache = emptyCache
-        , asStatus   = "Deleted " <> show (length items) <> " file(s)"
-        }
+    items
+      | any fiIsDir items ->
+          modify $ \s -> s
+            { asConfirm = Just ConfirmDelete
+            , asStatus  = "Selection contains directories, delete? (y/N)"
+            }
+      | otherwise -> do
+          liftIO $ doDeleteItems (asCurrentDir st) items
+          let kept = filter (not . fiSelected) (asFiles st)
+          modify $ \s -> s
+            { asFiles    = kept
+            , asCursor   = min (asCursor s) (max 0 (length kept - 1))
+            , asImgCache = emptyCache
+            , asStatus   = "Deleted " <> show (length items) <> " file(s)"
+            }
+
+-- ── Delete confirmation ─────────────────────────────────
+
+handleConfirmEvent :: V.Event -> EventM Name AppState ()
+handleConfirmEvent vev = case vev of
+  V.EvKey (V.KChar 'y') [] -> doConfirmDelete
+  V.EvKey (V.KChar 'Y') [] -> doConfirmDelete
+  _                         -> cancelDelete
+
+doConfirmDelete :: EventM Name AppState ()
+doConfirmDelete = do
+  st <- gets id
+  let (selectedItems, _) = L.partition fiSelected (asFiles st)
+      kept = filter (not . fiSelected) (asFiles st)
+  liftIO $ doDeleteItems (asCurrentDir st) selectedItems
+  modify $ \s -> s
+    { asFiles    = kept
+    , asCursor   = min (asCursor s) (max 0 (length kept - 1))
+    , asConfirm  = Nothing
+    , asImgCache = emptyCache
+    , asStatus   = "Deleted " <> show (length selectedItems) <> " item(s)"
+    }
+
+cancelDelete :: EventM Name AppState ()
+cancelDelete =
+  modify $ \s -> s { asConfirm = Nothing, asStatus = "Deletion cancelled" }
+
+-- | Delete a list of files/directories.  Directories are removed
+-- recursively; '..' is always skipped.
+doDeleteItems :: FilePath -> [FileItem] -> IO ()
+doDeleteItems cwd items =
+  forM_ items $ \item ->
+    let name = fiPath item
+    in  when (name /= "..") $ do
+          let fullPath = cwd ++ "/" ++ name
+          if fiIsDir item
+          then Dir.removeDirectoryRecursive fullPath
+          else Dir.removeFile fullPath
 
 enterDir :: EventM Name AppState ()
 enterDir = do

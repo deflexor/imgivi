@@ -7,6 +7,7 @@ module ImgVi.Types
   , SelectionMode (..)
   , RenameState (..)
   , RenderMode (..)
+  , ConfirmState (..)
   , ImageCache
   , emptyCache
   , lookupCache
@@ -56,6 +57,10 @@ data RenderMode
   | ModeBoth  -- ^ both fg and bg = averaged colour (-fb / -bf)
   deriving (Eq, Ord, Show, Enum, Bounded)
 
+-- | Pending confirmation prompts.
+data ConfirmState = ConfirmDelete
+  deriving (Eq, Ord, Show)
+
 -- | Cache for decoded images, keyed by file path.
 -- Stores the raw decoded image; scaling happens at render time.
 newtype ImageCache = ImageCache
@@ -82,6 +87,7 @@ data AppState = AppState
   , asCursor     :: Int
   , asSelMode    :: SelectionMode
   , asRename     :: Maybe RenameState
+  , asConfirm    :: Maybe ConfirmState
   , asRenderMode :: RenderMode
   , asImgCache   :: ImageCache
   , asStatus     :: Text
@@ -99,6 +105,7 @@ initialAppState termW termH = do
     , asCursor     = 0
     , asSelMode    = Normal
     , asRename     = Nothing
+    , asConfirm    = Nothing
     , asRenderMode = ModeBoth
     , asImgCache   = emptyCache
     , asStatus     = ""
