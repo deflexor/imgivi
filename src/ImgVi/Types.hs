@@ -6,6 +6,7 @@ module ImgVi.Types
   , FileItem (..)
   , SelectionMode (..)
   , RenameState (..)
+  , RenderMode (..)
   , ImageCache
   , emptyCache
   , lookupCache
@@ -47,6 +48,14 @@ data RenameState = RenameState
   }
   deriving (Eq, Ord, Show)
 
+-- | Rendering colour mode, matching @img2ascii -f -b@ flags.
+data RenderMode
+  = ModeMono  -- ^ no extra colour, luminance ramp only
+  | ModeFg    -- ^ foreground = averaged colour (-f)
+  | ModeBg    -- ^ background = averaged colour (-b)
+  | ModeBoth  -- ^ both fg and bg = averaged colour (-fb / -bf)
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
 -- | Cache for decoded images, keyed by file path.
 -- Stores the raw decoded image; scaling happens at render time.
 newtype ImageCache = ImageCache
@@ -73,6 +82,7 @@ data AppState = AppState
   , asCursor     :: Int
   , asSelMode    :: SelectionMode
   , asRename     :: Maybe RenameState
+  , asRenderMode :: RenderMode
   , asImgCache   :: ImageCache
   , asStatus     :: Text
   , asTermWidth  :: Int
@@ -89,6 +99,7 @@ initialAppState termW termH = do
     , asCursor     = 0
     , asSelMode    = Normal
     , asRename     = Nothing
+    , asRenderMode = ModeBoth
     , asImgCache   = emptyCache
     , asStatus     = ""
     , asTermWidth  = termW

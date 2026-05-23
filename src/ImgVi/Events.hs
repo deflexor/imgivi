@@ -19,7 +19,7 @@ import qualified Data.List as L (partition, zipWith3)
 import qualified Data.Text as T
 
 import ImgVi.ImageCache (isImageFile, updateCacheForFile)
-import ImgVi.Types (AppState(..), FileItem(..), Name, RenameState(..), SelectionMode(..), emptyCache)
+import ImgVi.Types (AppState(..), FileItem(..), Name, RenameState(..), RenderMode(..), SelectionMode(..), emptyCache)
 
 -- | Main event handler. Dispatches to rename handler when in rename mode.
 handleEvent :: BrickEvent Name () -> EventM Name AppState ()
@@ -44,6 +44,7 @@ handleNormalEvent vev = case vev of
   V.EvKey (V.KChar ' ') []  -> handleRangeSelect
   V.EvKey (V.KChar 'd') []  -> deleteSelected
   V.EvKey (V.KChar 'r') []  -> startRenameCurrent
+  V.EvKey (V.KChar 'm') []  -> cycleRenderMode
   V.EvKey V.KEnter []        -> enterDir
 
   V.EvResize w h             -> handleResize w h
@@ -145,6 +146,21 @@ validateName name
 
 handleResize :: Int -> Int -> EventM Name AppState ()
 handleResize w h = modify $ \s -> s { asTermWidth = w, asTermHeight = h }
+
+-- ── Render mode cycling ─────────────────────────────────
+
+cycleRenderMode :: EventM Name AppState ()
+cycleRenderMode = do
+  st <- gets id
+  let cur = asRenderMode st
+      modeNames = ["mono", "fg", "bg", "both"]
+      label m = fromMaybe "" (modeNames !!? fromEnum m)
+      new = case cur of
+              ModeMono -> ModeFg
+              ModeFg   -> ModeBg
+              ModeBg   -> ModeBoth
+              ModeBoth -> ModeMono
+  modify $ \s -> s { asRenderMode = new, asStatus = "Render mode: " <> label new }
 
 -- ── File listing helpers (unchanged) ───────────────────
 

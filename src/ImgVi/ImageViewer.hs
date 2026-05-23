@@ -38,7 +38,7 @@ drawImageViewer st =
           in  case lookupCache cacheKey (asImgCache st) of
                 Nothing    -> C.center (txt "Loading...")
                 Just dynImg ->
-                  C.center (raw (renderImage dynImg paneW paneH))
+                  C.center (raw (renderImage dynImg paneW paneH (asRenderMode st)))
 
 -- | Find the file at the current cursor position.
 findFileAtCursor :: AppState -> Maybe FileItem
