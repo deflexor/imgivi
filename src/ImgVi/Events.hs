@@ -235,18 +235,15 @@ handleRangeSelect = do
     RangeSelect start _ ->
       let lo = min start cur
           hi = max start cur
-          sel = case files !!? cur of
-                  Just item -> not (fiSelected item)
-                  Nothing   -> False
           newItems = zipWith (\idx item ->
             if idx >= lo && idx <= hi
-              then item { fiSelected = sel }
+              then item { fiSelected = not (fiSelected item) }
               else item
             ) [0 ..] files
       in  modify $ \s -> s
             { asFiles   = newItems
             , asSelMode = Normal
-            , asStatus  = "Selected range"
+            , asStatus  = "Toggled range"
             }
 
 deleteSelected :: EventM Name AppState ()
