@@ -169,18 +169,20 @@ startRenameCurrent = do
   st <- gets id
   case getCurrentItem st of
     Nothing -> modify $ \s -> s { asStatus = "No file selected" }
-    Just item -> do
-      let originalName = fiPath item
-          bufferText   = toText originalName
-          cursorPos    = T.length bufferText
-      modify $ \s -> s
-        { asRename = Just RenameState
-            { rsOriginal = originalName
-            , rsBuffer   = bufferText
-            , rsCursor   = cursorPos
+    Just item
+      | fiPath item == ".." -> modify $ \s -> s { asStatus = "Cannot rename '..'" }
+      | otherwise -> do
+          let originalName = fiPath item
+              bufferText   = toText originalName
+              cursorPos    = T.length bufferText
+          modify $ \s -> s
+            { asRename = Just RenameState
+                { rsOriginal = originalName
+                , rsBuffer   = bufferText
+                , rsCursor   = cursorPos
+                }
+            , asStatus = "Editing name (Enter=confirm, Esc=cancel)"
             }
-        , asStatus = "Editing name (Enter=confirm, Esc=cancel)"
-        }
 
 moveCursor :: Int -> EventM Name AppState ()
 moveCursor delta = do
@@ -254,10 +256,12 @@ deleteSelected = do
     []  -> modify $ \s -> s { asStatus = "No files selected" }
     items -> do
       liftIO $ forM_ items $ \item ->
-        let fullPath = asCurrentDir st ++ "/" ++ fiPath item
-        in  if fiIsDir item
-            then Dir.removeDirectoryLink fullPath
-            else Dir.removeFile fullPath
+        let name = fiPath item
+        in  when (name /= "..") $ do
+              let fullPath = asCurrentDir st ++ "/" ++ name
+              if fiIsDir item
+              then Dir.removeDirectoryLink fullPath
+              else Dir.removeFile fullPath
       let kept = filter (not . fiSelected) (asFiles st)
       modify $ \s -> s
         { asFiles    = kept
@@ -271,9 +275,16 @@ enterDir = do
   st <- gets id
   case getCurrentItem st of
     Just item | fiIsDir item -> do
-      let newDir = asCurrentDir st ++ "/" ++ fiPath item
-      normDir <- liftIO $ Dir.makeAbsolute newDir
-      loadDirIntoState normDir
+      let dirName = fiPath item
+      if dirName == ".."
+        then do
+          let parent = asCurrentDir st
+          normDir <- liftIO $ Dir.makeAbsolute (parent ++ "/..")
+          loadDirIntoState normDir
+        else do
+          let newDir = asCurrentDir st ++ "/" ++ dirName
+          normDir <- liftIO $ Dir.makeAbsolute newDir
+          loadDirIntoState normDir
     _ -> pass
 
 loadDirIntoState :: FilePath -> EventM Name AppState ()
@@ -301,7 +312,8 @@ listDirectory dir = do
       fullPaths = map (\f -> dir ++ "/" ++ f) sortedContents
   isDirs <- mapM Dir.doesDirectoryExist fullPaths
   sizes  <- mapM getFileSize fullPaths
-  pure $ L.zipWith3 (\f isDir size -> FileItem f isDir size False) sortedContents isDirs sizes
+  let items = L.zipWith3 (\f isDir size -> FileItem f isDir size False) sortedContents isDirs sizes
+  pure (FileItem ".." True 0 False : items)
 
 getFileSize :: FilePath -> IO Integer
 getFileSize path = do
